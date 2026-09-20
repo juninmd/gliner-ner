@@ -8,7 +8,8 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "gliner>=0.2.13",
     "pydantic>=2.8",
-    "tiktoken>=0.7",
+    "transformers>=4.40,<5",
+    "protobuf>=4.25",
 ]
 
 [dependency-groups]
