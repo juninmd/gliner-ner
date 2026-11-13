@@ -1,5 +1,9 @@
 # gliner-ner
 
+<p align="center">
+  <img src="docs/readme/hero.png" alt="Illustrative banner for gliner-ner (mockup with fictitious data)" width="100%">
+</p>
+
 **Zero-shot named-entity extraction as an HTTP service: send text and the labels you care about, get back spans with scores.**
 
 Built on [GLiNER](https://github.com/urchade/GLiNER) and FastAPI. One process loads one model at startup and serves extraction over `/extract` and `/extract/batch`, so several applications in the cluster can share the same model instead of embedding it in each one.
@@ -230,6 +234,18 @@ uv run --frozen pytest -q
 | `security.yml` | push on `main`, weekly cron | Shared security scan |
 
 `build.yml` only runs on pull requests, not on pushes to `main`.
+
+## Screenshots
+
+> [!NOTE]
+> **Illustrative mockups.** The screens below were rendered from HTML with fictitious data (Playwright). They are not captures of a real installation.
+
+<p align="center">
+  <img src="docs/readme/extract.png" alt="Extraction response — illustrative mockup with fictitious data" width="100%">
+  <br>
+  <sub>Extraction response — fictitious data.</sub>
+</p>
+
 
 ## Limitations
 
