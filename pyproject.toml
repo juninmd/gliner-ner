@@ -8,7 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "gliner>=0.2.13",
     "pydantic>=2.8",
-    "transformers>=4.40,<5",
+    "transformers>=4.40,<6",
     "protobuf>=4.25",
     "torch>=2.0",
 ]
