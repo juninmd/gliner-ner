@@ -65,3 +65,24 @@ def test_extract_returns_503_when_model_not_loaded(client, monkeypatch):
     monkeypatch.setattr(main, "_model", None)
     res = client.post("/extract", json={"text": "x"})
     assert res.status_code == 503
+
+
+def test_extract_batch_rejects_duplicate_ids(client, fake_model):
+    items = [{"id": "a", "text": "um"}, {"id": "a", "text": "dois"}]
+    res = client.post("/extract/batch", json={"items": items})
+    assert res.status_code == 422
+    fake_model.predict_entities.assert_not_called()
+
+
+def test_blank_labels_fall_back_to_defaults_and_others_are_trimmed(client, fake_model):
+    client.post("/extract", json={"text": "Lula", "labels": ["  ", ""]})
+    assert fake_model.predict_entities.call_args.args[1] == main.DEFAULT_LABELS
+    client.post("/extract", json={"text": "Lula", "labels": [" pessoa ", "pessoa", "local"]})
+    assert fake_model.predict_entities.call_args.args[1] == ["pessoa", "local"]
+
+
+def test_labels_are_bounded(client):
+    too_many = [f"l{i}" for i in range(main.MAX_LABELS + 1)]
+    assert client.post("/extract", json={"text": "x", "labels": too_many}).status_code == 422
+    too_long = ["a" * (main.MAX_LABEL_LENGTH + 1)]
+    assert client.post("/extract", json={"text": "x", "labels": too_long}).status_code == 422
