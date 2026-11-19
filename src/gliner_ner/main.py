@@ -1,9 +1,10 @@
 import os
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException
 from gliner import GLiNER
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, field_validator
 
 MODEL_NAME = os.environ.get("GLINER_MODEL", "urchade/gliner_multi-v2.1")
 DEFAULT_LABELS = [
@@ -16,6 +17,8 @@ DEFAULT_LABELS = [
 DEFAULT_THRESHOLD = float(os.environ.get("GLINER_DEFAULT_THRESHOLD", "0.5"))
 MAX_TEXT_LENGTH = int(os.environ.get("GLINER_MAX_TEXT_LENGTH", "5000"))
 MAX_BATCH_SIZE = int(os.environ.get("GLINER_MAX_BATCH_SIZE", "50"))
+MAX_LABELS = int(os.environ.get("GLINER_MAX_LABELS", "50"))
+MAX_LABEL_LENGTH = 100
 
 _model: GLiNER | None = None
 
@@ -35,9 +38,22 @@ app = FastAPI(
 )
 
 
+def _clean_labels(labels: list[str] | None) -> list[str] | None:
+    """Trim, drop blanks and repeats; an empty result means "use the default labels"."""
+    if labels is None:
+        return None
+    cleaned = list(dict.fromkeys(label.strip() for label in labels if label.strip()))
+    if any(len(label) > MAX_LABEL_LENGTH for label in cleaned):
+        raise ValueError(f"labels must have at most {MAX_LABEL_LENGTH} characters")
+    return cleaned or None
+
+
+Labels = Annotated[list[str] | None, Field(max_length=MAX_LABELS), AfterValidator(_clean_labels)]
+
+
 class ExtractRequest(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
-    labels: list[str] | None = None
+    labels: Labels = None
     threshold: float = Field(default=None, ge=0.0, le=1.0)  # type: ignore[assignment]
 
 
@@ -60,8 +76,16 @@ class BatchItem(BaseModel):
 
 class BatchExtractRequest(BaseModel):
     items: list[BatchItem] = Field(min_length=1, max_length=MAX_BATCH_SIZE)
-    labels: list[str] | None = None
+    labels: Labels = None
     threshold: float = Field(default=None, ge=0.0, le=1.0)  # type: ignore[assignment]
+
+    @field_validator("items")
+    @classmethod
+    def _unique_ids(cls, items: list[BatchItem]) -> list[BatchItem]:
+        # Results are keyed by id: a repeat would silently overwrite an earlier item's entities.
+        if len({item.id for item in items}) != len(items):
+            raise ValueError("items[].id must be unique")
+        return items
 
 
 class BatchExtractResponse(BaseModel):

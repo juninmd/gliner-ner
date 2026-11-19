@@ -83,7 +83,7 @@ Request body:
 | Field | Type | Required | Rules |
 |---|---|---|---|
 | `text` | string | yes | 1 to `GLINER_MAX_TEXT_LENGTH` characters |
-| `labels` | array of strings | no | Omitted or empty uses `GLINER_DEFAULT_LABELS` |
+| `labels` | array of strings | no | At most `GLINER_MAX_LABELS` items of up to 100 characters each; blanks and repeats are dropped; omitted or empty (after cleaning) uses `GLINER_DEFAULT_LABELS` |
 | `threshold` | number | no | 0 to 1; omitted uses `GLINER_DEFAULT_THRESHOLD` |
 
 Response:
@@ -121,9 +121,9 @@ Request body:
 | Field | Type | Required | Rules |
 |---|---|---|---|
 | `items` | array of objects | yes | 1 to `GLINER_MAX_BATCH_SIZE` items |
-| `items[].id` | string | yes | Key used in the response |
+| `items[].id` | string | yes | Key used in the response; must be unique within the request |
 | `items[].text` | string | yes | 1 to `GLINER_MAX_TEXT_LENGTH` characters |
-| `labels` | array of strings | no | Applies to every item |
+| `labels` | array of strings | no | Same rules as `/extract`; applies to every item |
 | `threshold` | number | no | Applies to every item |
 
 Response:
@@ -152,13 +152,13 @@ curl -s localhost:8080/extract/batch \
   -d '{"items": [{"id": "a1", "text": "Lula esteve em Franca"}], "labels": ["pessoa", "local"]}'
 ```
 
-`results` is a dictionary keyed by `items[].id`. If two items share the same ID, the later result silently replaces the earlier one — keep IDs unique.
+`results` is a dictionary keyed by `items[].id`. Repeated IDs are rejected with `422` so no result is silently overwritten.
 
 ### Errors
 
 | Status | When |
 |---|---|
-| `422` | Pydantic validation failed: empty text, text over the limit, more than `GLINER_MAX_BATCH_SIZE` items, missing `id`/`text`, or a `threshold` outside 0–1 |
+| `422` | Pydantic validation failed: empty text, text over the limit, more than `GLINER_MAX_BATCH_SIZE` items, repeated `items[].id`, missing `id`/`text`, too many or too long `labels`, or a `threshold` outside 0–1 |
 | `503` | An extraction handler ran while the global model was `None`; body is `{"detail": "Model not loaded yet"}` |
 | `500` | Anything raised inside GLiNER during prediction; FastAPI's default error response |
 
@@ -173,6 +173,7 @@ All variables are read **once, at module import time**. Changing them requires r
 | `GLINER_DEFAULT_THRESHOLD` | `0.5` | Score threshold used when a request omits `threshold` |
 | `GLINER_MAX_TEXT_LENGTH` | `5000` | Maximum characters per text, also enforced by Pydantic |
 | `GLINER_MAX_BATCH_SIZE` | `50` | Maximum number of items in `/extract/batch` |
+| `GLINER_MAX_LABELS` | `50` | Maximum number of labels per request |
 
 ## Model lifecycle
 
