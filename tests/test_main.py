@@ -86,3 +86,16 @@ def test_labels_are_bounded(client):
     assert client.post("/extract", json={"text": "x", "labels": too_many}).status_code == 422
     too_long = ["a" * (main.MAX_LABEL_LENGTH + 1)]
     assert client.post("/extract", json={"text": "x", "labels": too_long}).status_code == 422
+
+
+@pytest.mark.parametrize("blank", [" ", "\n\t  "])
+def test_extract_rejects_blank_text(client, fake_model, blank):
+    res = client.post("/extract", json={"text": blank})
+    assert res.status_code == 422
+    fake_model.predict_entities.assert_not_called()
+
+
+def test_extract_batch_rejects_blank_item_text(client, fake_model):
+    res = client.post("/extract/batch", json={"items": [{"id": "a", "text": "   "}]})
+    assert res.status_code == 422
+    fake_model.predict_entities.assert_not_called()
