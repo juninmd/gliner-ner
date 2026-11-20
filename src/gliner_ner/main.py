@@ -1,4 +1,5 @@
 import os
+import re
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -18,6 +19,11 @@ MAX_BATCH_SIZE = int(os.environ.get("GLINER_MAX_BATCH_SIZE", "50"))
 MAX_LABELS = int(os.environ.get("GLINER_MAX_LABELS", "50"))
 MAX_LABEL_LENGTH = 100
 INFERENCE_BATCH_SIZE = int(os.environ.get("GLINER_INFERENCE_BATCH_SIZE", "8"))
+# GLiNER silently drops every word past its max_len (384); long texts are read in windows
+# well under it (subword tokens and labels also count), overlapping so no entity is cut.
+CHUNK_WORDS = 200
+CHUNK_OVERLAP = 30
+_WORD = re.compile(r"\w+(?:[-_]\w+)*|\S")  # same word splitter GLiNER uses
 
 _model: GLiNER | None = None
 
@@ -118,28 +124,45 @@ def _entities(raw: list[dict]) -> list[Entity]:
     ]
 
 
-def _run(
-    model: GLiNER, text: str, labels: list[str] | None, threshold: float | None
-) -> list[Entity]:
-    raw = model.predict_entities(
-        text,
-        labels or DEFAULT_LABELS,
-        threshold=threshold if threshold is not None else DEFAULT_THRESHOLD,
-    )
-    return _entities(raw)
+def _windows(text: str) -> list[tuple[int, str]]:
+    """(offset, piece) windows of at most CHUNK_WORDS words covering the whole text."""
+    spans = [m.span() for m in _WORD.finditer(text)]
+    if len(spans) <= CHUNK_WORDS:
+        return [(0, text)]
+    windows = []
+    for first in range(0, len(spans), CHUNK_WORDS - CHUNK_OVERLAP):
+        part = spans[first : first + CHUNK_WORDS]
+        start, end = part[0][0], part[-1][1]
+        windows.append((start, text[start:end]))
+        if first + CHUNK_WORDS >= len(spans):
+            break
+    return windows
 
 
 def _run_batch(
     model: GLiNER, texts: list[str], labels: list[str] | None, threshold: float | None
 ) -> list[list[Entity]]:
-    # One batched forward pass instead of one model call per item.
-    raw = model.inference(
-        texts,
-        labels or DEFAULT_LABELS,
-        threshold=threshold if threshold is not None else DEFAULT_THRESHOLD,
-        batch_size=INFERENCE_BATCH_SIZE,
+    # One batched forward pass over every window of every text instead of one call per item.
+    windows = [_windows(text) for text in texts]
+    raw = iter(
+        model.inference(
+            [piece for item in windows for _, piece in item],
+            labels or DEFAULT_LABELS,
+            threshold=threshold if threshold is not None else DEFAULT_THRESHOLD,
+            batch_size=INFERENCE_BATCH_SIZE,
+        )
     )
-    return [_entities(item) for item in raw]
+    results = []
+    for item in windows:
+        # Overlapping windows can find the same span twice: keep the best score.
+        best: dict[tuple[int, int, str], dict] = {}
+        for offset, _ in item:
+            for e in next(raw):
+                key = (e["start"] + offset, e["end"] + offset, e["label"])
+                if key not in best or e["score"] > best[key]["score"]:
+                    best[key] = {**e, "start": key[0], "end": key[1]}
+        results.append(_entities(sorted(best.values(), key=lambda e: (e["start"], e["end"]))))
+    return results
 
 
 @app.get("/health")
@@ -150,7 +173,8 @@ def health():
 @app.post("/extract", response_model=ExtractResponse)
 def extract(req: ExtractRequest):
     model = _require_model()
-    return ExtractResponse(entities=_run(model, req.text, req.labels, req.threshold))
+    [entities] = _run_batch(model, [req.text], req.labels, req.threshold)
+    return ExtractResponse(entities=entities)
 
 
 @app.post("/extract/batch", response_model=BatchExtractResponse)
