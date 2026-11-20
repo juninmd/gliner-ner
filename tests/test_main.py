@@ -9,8 +9,11 @@ from gliner_ner import main
 @pytest.fixture
 def fake_model(monkeypatch):
     model = MagicMock()
-    model.predict_entities.return_value = [
-        {"text": "Lula", "label": "pessoa", "score": 0.98, "start": 0, "end": 4}
+    lula = {"text": "Lula", "label": "pessoa", "score": 0.98, "start": 0, "end": 4}
+    model.predict_entities.return_value = [lula]
+    # Batched inference returns one list per input text, in order.
+    model.inference.side_effect = lambda texts, *_a, **_k: [
+        [lula] if "Lula" in t else [] for t in texts
     ]
     # Patched before the app starts, so the lifespan's from_pretrained call
     # never touches the network or downloads real model weights in CI.
@@ -98,4 +101,18 @@ def test_extract_rejects_blank_text(client, fake_model, blank):
 def test_extract_batch_rejects_blank_item_text(client, fake_model):
     res = client.post("/extract/batch", json={"items": [{"id": "a", "text": "   "}]})
     assert res.status_code == 422
+    fake_model.predict_entities.assert_not_called()
+
+
+def test_extract_batch_uses_one_batched_model_call_and_keeps_order(client, fake_model):
+    items = [{"id": "a", "text": "Lula esteve em Franca"}, {"id": "b", "text": "nada aqui"}]
+    res = client.post("/extract/batch", json={"items": items, "labels": ["pessoa"]})
+    assert res.status_code == 200
+    assert res.json()["results"] == {
+        "a": [{"text": "Lula", "label": "pessoa", "score": 0.98, "start": 0, "end": 4}],
+        "b": [],
+    }
+    fake_model.inference.assert_called_once()
+    assert fake_model.inference.call_args.args[0] == ["Lula esteve em Franca", "nada aqui"]
+    assert fake_model.inference.call_args.kwargs["batch_size"] == main.INFERENCE_BATCH_SIZE
     fake_model.predict_entities.assert_not_called()
