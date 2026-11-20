@@ -48,11 +48,19 @@ def _clean_labels(labels: list[str] | None) -> list[str] | None:
     return cleaned or None
 
 
+def _non_blank(text: str) -> str:
+    # Whitespace-only text has nothing to extract but would still cost a model call.
+    if not text.strip():
+        raise ValueError("text must not be blank")
+    return text
+
+
+Text = Annotated[str, Field(min_length=1, max_length=MAX_TEXT_LENGTH), AfterValidator(_non_blank)]
 Labels = Annotated[list[str] | None, Field(max_length=MAX_LABELS), AfterValidator(_clean_labels)]
 
 
 class ExtractRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
+    text: Text
     labels: Labels = None
     threshold: float = Field(default=None, ge=0.0, le=1.0)  # type: ignore[assignment]
 
@@ -71,7 +79,7 @@ class ExtractResponse(BaseModel):
 
 class BatchItem(BaseModel):
     id: str
-    text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
+    text: Text
 
 
 class BatchExtractRequest(BaseModel):
