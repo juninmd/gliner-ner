@@ -9,9 +9,7 @@ from pydantic import AfterValidator, BaseModel, Field, field_validator
 MODEL_NAME = os.environ.get("GLINER_MODEL", "urchade/gliner_multi-v2.1")
 DEFAULT_LABELS = [
     l.strip()
-    for l in os.environ.get(
-        "GLINER_DEFAULT_LABELS", "pessoa,organização,local,empresa"
-    ).split(",")
+    for l in os.environ.get("GLINER_DEFAULT_LABELS", "pessoa,organização,local,empresa").split(",")
     if l.strip()
 ]
 DEFAULT_THRESHOLD = float(os.environ.get("GLINER_DEFAULT_THRESHOLD", "0.5"))
@@ -19,6 +17,7 @@ MAX_TEXT_LENGTH = int(os.environ.get("GLINER_MAX_TEXT_LENGTH", "5000"))
 MAX_BATCH_SIZE = int(os.environ.get("GLINER_MAX_BATCH_SIZE", "50"))
 MAX_LABELS = int(os.environ.get("GLINER_MAX_LABELS", "50"))
 MAX_LABEL_LENGTH = 100
+INFERENCE_BATCH_SIZE = int(os.environ.get("GLINER_INFERENCE_BATCH_SIZE", "8"))
 
 _model: GLiNER | None = None
 
@@ -106,12 +105,7 @@ def _require_model() -> GLiNER:
     return _model
 
 
-def _run(model: GLiNER, text: str, labels: list[str] | None, threshold: float | None) -> list[Entity]:
-    raw = model.predict_entities(
-        text,
-        labels or DEFAULT_LABELS,
-        threshold=threshold if threshold is not None else DEFAULT_THRESHOLD,
-    )
+def _entities(raw: list[dict]) -> list[Entity]:
     return [
         Entity(
             text=e["text"],
@@ -122,6 +116,30 @@ def _run(model: GLiNER, text: str, labels: list[str] | None, threshold: float | 
         )
         for e in raw
     ]
+
+
+def _run(
+    model: GLiNER, text: str, labels: list[str] | None, threshold: float | None
+) -> list[Entity]:
+    raw = model.predict_entities(
+        text,
+        labels or DEFAULT_LABELS,
+        threshold=threshold if threshold is not None else DEFAULT_THRESHOLD,
+    )
+    return _entities(raw)
+
+
+def _run_batch(
+    model: GLiNER, texts: list[str], labels: list[str] | None, threshold: float | None
+) -> list[list[Entity]]:
+    # One batched forward pass instead of one model call per item.
+    raw = model.inference(
+        texts,
+        labels or DEFAULT_LABELS,
+        threshold=threshold if threshold is not None else DEFAULT_THRESHOLD,
+        batch_size=INFERENCE_BATCH_SIZE,
+    )
+    return [_entities(item) for item in raw]
 
 
 @app.get("/health")
@@ -138,7 +156,7 @@ def extract(req: ExtractRequest):
 @app.post("/extract/batch", response_model=BatchExtractResponse)
 def extract_batch(req: BatchExtractRequest):
     model = _require_model()
-    results = {
-        item.id: _run(model, item.text, req.labels, req.threshold) for item in req.items
-    }
-    return BatchExtractResponse(results=results)
+    entities = _run_batch(model, [item.text for item in req.items], req.labels, req.threshold)
+    return BatchExtractResponse(
+        results={item.id: found for item, found in zip(req.items, entities, strict=True)}
+    )
