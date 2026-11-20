@@ -39,7 +39,7 @@ def test_extract_returns_entities(client, fake_model):
     body = res.json()
     assert body["entities"][0]["text"] == "Lula"
     assert body["entities"][0]["label"] == "pessoa"
-    fake_model.predict_entities.assert_called_once()
+    fake_model.inference.assert_called_once()
 
 
 def test_extract_rejects_empty_text(client):
@@ -74,14 +74,14 @@ def test_extract_batch_rejects_duplicate_ids(client, fake_model):
     items = [{"id": "a", "text": "um"}, {"id": "a", "text": "dois"}]
     res = client.post("/extract/batch", json={"items": items})
     assert res.status_code == 422
-    fake_model.predict_entities.assert_not_called()
+    fake_model.inference.assert_not_called()
 
 
 def test_blank_labels_fall_back_to_defaults_and_others_are_trimmed(client, fake_model):
     client.post("/extract", json={"text": "Lula", "labels": ["  ", ""]})
-    assert fake_model.predict_entities.call_args.args[1] == main.DEFAULT_LABELS
+    assert fake_model.inference.call_args.args[1] == main.DEFAULT_LABELS
     client.post("/extract", json={"text": "Lula", "labels": [" pessoa ", "pessoa", "local"]})
-    assert fake_model.predict_entities.call_args.args[1] == ["pessoa", "local"]
+    assert fake_model.inference.call_args.args[1] == ["pessoa", "local"]
 
 
 def test_labels_are_bounded(client):
@@ -95,13 +95,13 @@ def test_labels_are_bounded(client):
 def test_extract_rejects_blank_text(client, fake_model, blank):
     res = client.post("/extract", json={"text": blank})
     assert res.status_code == 422
-    fake_model.predict_entities.assert_not_called()
+    fake_model.inference.assert_not_called()
 
 
 def test_extract_batch_rejects_blank_item_text(client, fake_model):
     res = client.post("/extract/batch", json={"items": [{"id": "a", "text": "   "}]})
     assert res.status_code == 422
-    fake_model.predict_entities.assert_not_called()
+    fake_model.inference.assert_not_called()
 
 
 def test_extract_batch_uses_one_batched_model_call_and_keeps_order(client, fake_model):
@@ -116,3 +116,47 @@ def test_extract_batch_uses_one_batched_model_call_and_keeps_order(client, fake_
     assert fake_model.inference.call_args.args[0] == ["Lula esteve em Franca", "nada aqui"]
     assert fake_model.inference.call_args.kwargs["batch_size"] == main.INFERENCE_BATCH_SIZE
     fake_model.predict_entities.assert_not_called()
+
+
+def _find_maria(texts, *_a, **_k):
+    # Fake model: finds "Maria" in each window it receives, with offsets local to the window.
+    out = []
+    for t in texts:
+        i = t.find("Maria")
+        out.append(
+            []
+            if i < 0
+            else [{"text": "Maria", "label": "pessoa", "score": 0.9, "start": i, "end": i + 5}]
+        )
+    return out
+
+
+def test_long_text_is_read_to_the_end_in_windows(client, fake_model):
+    # GLiNER drops every word past its max_len (384) without error: the end of a long text vanished.
+    words = ["ab"] * 900
+    words[850] = "Maria"
+    text = " ".join(words)
+    fake_model.inference.side_effect = _find_maria
+    res = client.post("/extract", json={"text": text})
+    assert res.status_code == 200
+    [found] = res.json()["entities"]
+    assert text[found["start"] : found["end"]] == "Maria"
+    windows = fake_model.inference.call_args.args[0]
+    assert len(windows) > 1
+    assert all(len(w.split()) <= main.CHUNK_WORDS for w in windows)
+
+
+def test_entity_in_window_overlap_is_reported_once(client, fake_model):
+    words = ["ab"] * 400
+    overlap_word = main.CHUNK_WORDS - main.CHUNK_OVERLAP + 5  # in the first and second window
+    words[overlap_word] = "Maria"
+    fake_model.inference.side_effect = _find_maria
+    res = client.post(
+        "/extract/batch",
+        json={"items": [{"id": "a", "text": " ".join(words)}, {"id": "b", "text": "Maria"}]},
+    )
+    results = res.json()["results"]
+    assert len(results["a"]) == 1
+    assert results["b"] == [
+        {"text": "Maria", "label": "pessoa", "score": 0.9, "start": 0, "end": 5}
+    ]
