@@ -160,3 +160,23 @@ def test_entity_in_window_overlap_is_reported_once(client, fake_model):
     assert results["b"] == [
         {"text": "Maria", "label": "pessoa", "score": 0.9, "start": 0, "end": 5}
     ]
+
+
+@pytest.mark.parametrize(
+    ("url", "body"),
+    [
+        ("/extract", {"text": "Lula esteve em Franca"}),
+        ("/extract/batch", {"items": [{"id": "a", "text": "Lula esteve em Franca"}]}),
+    ],
+)
+def test_null_threshold_uses_the_default(client, fake_model, url, body):
+    # Clients often serialize an unset option as null; that means "use the default", not 422.
+    res = client.post(url, json={**body, "threshold": None})
+    assert res.status_code == 200
+    assert fake_model.inference.call_args.kwargs["threshold"] == main.DEFAULT_THRESHOLD
+
+
+def test_zero_threshold_is_kept(client, fake_model):
+    res = client.post("/extract", json={"text": "Lula", "threshold": 0})
+    assert res.status_code == 200
+    assert fake_model.inference.call_args.kwargs["threshold"] == 0
