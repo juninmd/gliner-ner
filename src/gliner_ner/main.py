@@ -67,7 +67,7 @@ Labels = Annotated[list[str] | None, Field(max_length=MAX_LABELS), AfterValidato
 class ExtractRequest(BaseModel):
     text: Text
     labels: Labels = None
-    threshold: float = Field(default=None, ge=0.0, le=1.0)  # type: ignore[assignment]
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class Entity(BaseModel):
@@ -90,7 +90,7 @@ class BatchItem(BaseModel):
 class BatchExtractRequest(BaseModel):
     items: list[BatchItem] = Field(min_length=1, max_length=MAX_BATCH_SIZE)
     labels: Labels = None
-    threshold: float = Field(default=None, ge=0.0, le=1.0)  # type: ignore[assignment]
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @field_validator("items")
     @classmethod
