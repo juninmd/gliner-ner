@@ -1,6 +1,6 @@
 # AGENTS.md
 
-gliner-ner: a zero-shot named-entity extraction HTTP service on GLiNER and FastAPI. One process loads one model at startup, so several cluster apps can share it. Public docs are in Portuguese and English (`README.md`).
+gliner-ner: a zero-shot named-entity extraction HTTP service on GLiNER and FastAPI. One process loads one model at startup, so several cluster apps can share it. The README is in English.
 
 ## Stack
 - Python >= 3.12, FastAPI, Uvicorn, Pydantic, GLiNER (default model `urchade/gliner_multi-v2.1`), PyTorch (CPU wheels from the `pytorch-cpu` index)
